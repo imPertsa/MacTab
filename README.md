@@ -28,6 +28,11 @@ On first launch macOS will ask for **Accessibility** permission
 The app is an agent (no Dock icon); quit it from its **menu-bar icon**
 (rectangle icon → Quit MacTab, ⌘Q).
 
+If macOS shows MacTab as enabled but it still does not respond, remove the old
+MacTab entry from Accessibility, launch the newly built app, and enable it once.
+The build uses a stable designated code requirement so subsequent rebuilds keep
+that grant even though the app is ad-hoc signed.
+
 ## make targets
 
 | Target                   | What it does                                                                        |

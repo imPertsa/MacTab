@@ -2,6 +2,7 @@
 #import "SwitcherPanel.h"
 #import "WindowInfo.h"
 #import "WindowRaiser.h"
+#import "PrivateAPI.h"
 
 #import <Carbon/Carbon.h>  // for kVK_Tab, kVK_Escape
 
@@ -12,6 +13,9 @@ static const NSTimeInterval kShowDelay = 0.2;
 @interface SwitcherController () {
     CFMachPortRef _tap;
     CFRunLoopSourceRef _runLoopSource;
+    EventHandlerRef _hotKeyHandler;
+    EventHotKeyRef _forwardHotKey;
+    EventHotKeyRef _backwardHotKey;
 }
 @property(nonatomic, assign) BOOL switching;
 @property(nonatomic, assign) NSInteger selectedIndex;
@@ -21,12 +25,32 @@ static const NSTimeInterval kShowDelay = 0.2;
 @property(nonatomic, strong) NSTimer *showTimer;
 @property(nonatomic, assign) BOOL panelVisible;
 - (CGEventRef)handleEventOfType:(CGEventType)type event:(CGEventRef)event;
+- (void)handleHotKeyBackward:(BOOL)backward;
 @end
+
+static const OSType kHotKeySignature = 'McTb';
+static const UInt32 kForwardHotKeyID = 1;
+static const UInt32 kBackwardHotKeyID = 2;
+static const int kNativeCommandTabHotKey = 1;
+static const int kNativeCommandShiftTabHotKey = 2;
 
 static CGEventRef EventTapCallback(CGEventTapProxy proxy, CGEventType type,
                                    CGEventRef event, void *refcon) {
     SwitcherController *self = (__bridge SwitcherController *)refcon;
     return [self handleEventOfType:type event:event];
+}
+
+static OSStatus HotKeyCallback(EventHandlerCallRef nextHandler, EventRef event,
+                               void *refcon) {
+    EventHotKeyID hotKeyID = {0};
+    OSStatus status = GetEventParameter(event, kEventParamDirectObject,
+                                        typeEventHotKeyID, NULL,
+                                        sizeof(hotKeyID), NULL, &hotKeyID);
+    if (status != noErr || hotKeyID.signature != kHotKeySignature) return status;
+
+    SwitcherController *self = (__bridge SwitcherController *)refcon;
+    [self handleHotKeyBackward:hotKeyID.id == kBackwardHotKeyID];
+    return noErr;
 }
 
 @implementation SwitcherController
@@ -35,11 +59,50 @@ static CGEventRef EventTapCallback(CGEventTapProxy proxy, CGEventType type,
     self.selfPID = getpid();
     self.panel = [[SwitcherPanel alloc] init];
 
+    CGError disableForward = CGSSetSymbolicHotKeyEnabled(
+        kNativeCommandTabHotKey, false);
+    CGError disableBackward = CGSSetSymbolicHotKeyEnabled(
+        kNativeCommandShiftTabHotKey, false);
+    if (disableForward != kCGErrorSuccess ||
+        disableBackward != kCGErrorSuccess) {
+        NSLog(@"[Switcher] Failed to disable native hotkeys: forward %d, backward %d",
+              disableForward, disableBackward);
+        [self restoreNativeHotKeys];
+        return NO;
+    }
+
+    EventTypeSpec hotKeyEvent = {kEventClassKeyboard, kEventHotKeyPressed};
+    OSStatus handlerStatus = InstallApplicationEventHandler(
+        HotKeyCallback, 1, &hotKeyEvent, (__bridge void *)self, &_hotKeyHandler);
+    EventHotKeyID forwardID = {kHotKeySignature, kForwardHotKeyID};
+    EventHotKeyID backwardID = {kHotKeySignature, kBackwardHotKeyID};
+    OSStatus forwardStatus = RegisterEventHotKey(
+        kVK_Tab, cmdKey, forwardID, GetApplicationEventTarget(), 0,
+        &_forwardHotKey);
+    OSStatus backwardStatus = RegisterEventHotKey(
+        kVK_Tab, cmdKey | shiftKey, backwardID, GetApplicationEventTarget(), 0,
+        &_backwardHotKey);
+    if (handlerStatus != noErr || forwardStatus != noErr ||
+        backwardStatus != noErr) {
+        NSLog(@"[Switcher] Failed to register hotkeys: handler %d, forward %d, backward %d",
+              handlerStatus, forwardStatus, backwardStatus);
+        if (_forwardHotKey) UnregisterEventHotKey(_forwardHotKey);
+        if (_backwardHotKey) UnregisterEventHotKey(_backwardHotKey);
+        if (_hotKeyHandler) RemoveEventHandler(_hotKeyHandler);
+        _forwardHotKey = NULL;
+        _backwardHotKey = NULL;
+        _hotKeyHandler = NULL;
+        [self restoreNativeHotKeys];
+        return NO;
+    }
+
     CGEventMask mask = CGEventMaskBit(kCGEventKeyDown) |
                        CGEventMaskBit(kCGEventKeyUp) |
                        CGEventMaskBit(kCGEventFlagsChanged);
 
-    _tap = CGEventTapCreate(kCGSessionEventTap,
+    // Carbon handles Tab. The HID tap handles Escape and observes Command
+    // release so the selected window is committed at the right time.
+    _tap = CGEventTapCreate(kCGHIDEventTap,
                             kCGHeadInsertEventTap,
                             kCGEventTapOptionDefault,  // active: may consume
                             mask,
@@ -47,14 +110,26 @@ static CGEventRef EventTapCallback(CGEventTapProxy proxy, CGEventType type,
                             (__bridge void *)self);
     if (!_tap) {
         NSLog(@"[Switcher] Failed to create event tap — is Accessibility permission granted?");
+        UnregisterEventHotKey(_forwardHotKey);
+        UnregisterEventHotKey(_backwardHotKey);
+        RemoveEventHandler(_hotKeyHandler);
+        _forwardHotKey = NULL;
+        _backwardHotKey = NULL;
+        _hotKeyHandler = NULL;
+        [self restoreNativeHotKeys];
         return NO;
     }
 
     _runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, _tap, 0);
     CFRunLoopAddSource(CFRunLoopGetMain(), _runLoopSource, kCFRunLoopCommonModes);
     CGEventTapEnable(_tap, true);
-    NSLog(@"[Switcher] Event tap installed. Hold ⌘ and tap Tab.");
+    NSLog(@"[Switcher] Hotkeys and event tap installed. Hold ⌘ and tap Tab.");
     return YES;
+}
+
+- (void)restoreNativeHotKeys {
+    CGSSetSymbolicHotKeyEnabled(kNativeCommandTabHotKey, true);
+    CGSSetSymbolicHotKeyEnabled(kNativeCommandShiftTabHotKey, true);
 }
 
 - (CGEventRef)handleEventOfType:(CGEventType)type event:(CGEventRef)event {
@@ -70,20 +145,9 @@ static CGEventRef EventTapCallback(CGEventTapProxy proxy, CGEventType type,
         (CGKeyCode)CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode);
     CGEventFlags flags = CGEventGetFlags(event);
     BOOL cmd = (flags & kCGEventFlagMaskCommand) != 0;
-    BOOL shift = (flags & kCGEventFlagMaskShift) != 0;
 
     switch (type) {
         case kCGEventKeyDown:
-            if (keycode == kVK_Tab && cmd) {
-                if (!self.switching) {
-                    if (![self beginSwitchingBackward:shift]) {
-                        return event;  // <2 windows: fall back to native switcher
-                    }
-                } else {
-                    [self advanceBackward:shift];
-                }
-                return NULL;  // swallow so macOS's ⌘Tab switcher never sees it
-            }
             if (keycode == kVK_Escape && self.switching) {
                 [self cancel];
                 return NULL;
@@ -91,9 +155,9 @@ static CGEventRef EventTapCallback(CGEventTapProxy proxy, CGEventType type,
             break;
 
         case kCGEventKeyUp:
-            // Swallow the Tab/Escape key-up while switching so the key-up we
-            // consumed the key-down for doesn't leak to the frontmost app.
-            if (self.switching && (keycode == kVK_Tab || keycode == kVK_Escape))
+            // Escape key-down is consumed while switching, so consume its
+            // matching key-up as well.
+            if (self.switching && keycode == kVK_Escape)
                 return NULL;
             break;
 
@@ -108,6 +172,14 @@ static CGEventRef EventTapCallback(CGEventTapProxy proxy, CGEventType type,
             break;
     }
     return event;
+}
+
+- (void)handleHotKeyBackward:(BOOL)backward {
+    if (!self.switching) {
+        [self beginSwitchingBackward:backward];
+    } else {
+        [self advanceBackward:backward];
+    }
 }
 
 #pragma mark - State machine

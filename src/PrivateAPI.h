@@ -8,3 +8,7 @@
 #import <ApplicationServices/ApplicationServices.h>
 
 extern AXError _AXUIElementGetWindow(AXUIElementRef element, CGWindowID *identifier);
+
+// The Dock owns symbolic hotkeys 1 (Command-Tab) and 2
+// (Command-Shift-Tab) before Carbon hotkeys are dispatched.
+extern CGError CGSSetSymbolicHotKeyEnabled(int hotKey, bool enabled);

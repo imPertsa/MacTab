@@ -34,7 +34,12 @@ $(BUNDLE): $(SOURCES) Info.plist
 	cp Info.plist $(BUILD)/$(BUNDLE)/Contents/Info.plist
 	@# Ad-hoc code signature so macOS keeps a stable Accessibility identity
 	@# across rebuilds (otherwise you must re-grant permission every build).
-	codesign --force --deep --sign - $(BUILD)/$(BUNDLE)
+	@# An ad-hoc signature has no stable designated requirement by default, so TCC
+	@# can treat every rebuild as unrelated code. Give it an identifier-based
+	@# requirement so the Accessibility grant survives code-hash changes.
+	codesign --force --deep --sign - \
+		--requirements '=designated => identifier "$(BUNDLE_ID)"' \
+		$(BUILD)/$(BUNDLE)
 	@echo "Built $(BUILD)/$(BUNDLE)"
 
 run: all

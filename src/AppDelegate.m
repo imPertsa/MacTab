@@ -24,8 +24,16 @@
     if (self.didStart) return;
 
     if (AXIsProcessTrusted()) {
-        self.didStart = YES;
-        [self.switcher start];
+        if ([self.switcher start]) {
+            self.didStart = YES;
+        } else {
+            // Trust and event-tap authorization can briefly disagree after a
+            // permission change. Keep retrying instead of getting stuck until
+            // the next launch.
+            [self performSelector:@selector(startWhenTrusted)
+                       withObject:nil
+                       afterDelay:1.0];
+        }
         return;
     }
 
@@ -55,6 +63,13 @@
     hint.enabled = NO;
     [menu addItem:hint];
     [menu addItem:[NSMenuItem separatorItem]];
+    NSMenuItem *accessibility = [[NSMenuItem alloc]
+        initWithTitle:@"Open Accessibility Settings…"
+               action:@selector(openAccessibilitySettings:)
+        keyEquivalent:@""];
+    accessibility.target = self;
+    [menu addItem:accessibility];
+    [menu addItem:[NSMenuItem separatorItem]];
     NSMenuItem *github = [[NSMenuItem alloc]
         initWithTitle:@"View at github.com/samuelcolvin/MacTab" action:@selector(openGitHub:) keyEquivalent:@""];
     github.target = self;
@@ -66,9 +81,19 @@
     self.statusItem.menu = menu;
 }
 
+- (void)openAccessibilitySettings:(id)sender {
+    NSURL *url = [NSURL URLWithString:
+        @"x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"];
+    [[NSWorkspace sharedWorkspace] openURL:url];
+}
+
 - (void)openGitHub:(id)sender {
     [[NSWorkspace sharedWorkspace]
         openURL:[NSURL URLWithString:@"https://github.com/samuelcolvin/MacTab"]];
+}
+
+- (void)applicationWillTerminate:(NSNotification *)notification {
+    [self.switcher restoreNativeHotKeys];
 }
 
 @end
