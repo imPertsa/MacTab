@@ -5,4 +5,5 @@
 // Accessibility permission).
 @interface SwitcherController : NSObject
 - (BOOL)start;
+- (void)restoreNativeHotKeys;
 @end
