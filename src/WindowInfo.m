@@ -119,12 +119,13 @@ static CGDirectDisplayID DisplayUnderCursor(void) {
     return result;
 }
 
-+ (void)fillTitlesViaAccessibility:(NSArray<WindowInfo *> *)windows {
++ (NSArray<WindowInfo *> *)filterAndFillTitlesViaAccessibility:(NSArray<WindowInfo *> *)windows {
+    NSMutableSet<NSNumber *> *auxiliaryWindowIDs = [NSMutableSet set];
+
     // One AX app query per owning app, not per window.
     NSMutableDictionary<NSNumber *, NSMutableArray<WindowInfo *> *> *byPID =
         [NSMutableDictionary dictionary];
     for (WindowInfo *w in windows) {
-        if (w.windowTitle.length) continue;  // CG already provided one
         NSMutableArray<WindowInfo *> *group = byPID[@(w.ownerPID)];
         if (!group) {
             group = [NSMutableArray array];
@@ -151,6 +152,12 @@ static CGDirectDisplayID DisplayUnderCursor(void) {
                     (AXUIElementRef)CFArrayGetValueAtIndex(axWindows, i);
                 CGWindowID wid = kCGNullWindowID;
                 if (_AXUIElementGetWindow(axWin, &wid) != kAXErrorSuccess) continue;
+
+                // Helium exposes its active Find-in-Page surface as a separate
+                // AXWindow with AXUnknown subrole and a title beginning
+                // "Find in page". WindowServer reports it at layer 0, so the
+                // regular CG window filters don't distinguish it from a tab.
+                BOOL isFindInPageWindow = NO;
                 for (WindowInfo *w in byPID[pidNum]) {
                     if (w.windowID != wid) continue;
                     CFTypeRef title = NULL;
@@ -158,17 +165,32 @@ static CGDirectDisplayID DisplayUnderCursor(void) {
                                                       &title) == kAXErrorSuccess &&
                         title) {
                         if (CFGetTypeID(title) == CFStringGetTypeID()) {
-                            w.windowTitle = (__bridge NSString *)title;
+                            NSString *axWindowTitle = (__bridge NSString *)title;
+                            if (!w.windowTitle.length) w.windowTitle = axWindowTitle;
+                            isFindInPageWindow =
+                                [w.appName rangeOfString:@"Helium"
+                                                 options:NSCaseInsensitiveSearch].location != NSNotFound &&
+                                [axWindowTitle rangeOfString:@"Find in page"
+                                                     options:NSCaseInsensitiveSearch].location == 0;
                         }
                         CFRelease(title);
                     }
                     break;
                 }
+                if (isFindInPageWindow) [auxiliaryWindowIDs addObject:@(wid)];
             }
         }
         if (axWindows) CFRelease(axWindows);
         CFRelease(app);
     }
+
+    if (auxiliaryWindowIDs.count == 0) return windows;
+    NSIndexSet *keep = [windows indexesOfObjectsPassingTest:^BOOL(WindowInfo *w,
+                                                                  NSUInteger idx,
+                                                                  BOOL *stop) {
+        return ![auxiliaryWindowIDs containsObject:@(w.windowID)];
+    }];
+    return [windows objectsAtIndexes:keep];
 }
 
 - (NSString *)displayTitle {

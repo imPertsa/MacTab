@@ -208,7 +208,21 @@ static OSStatus HotKeyCallback(EventHandlerCallRef nextHandler, EventRef event,
     if (!self.switching) return;
     // Resolve window titles only now that the picker is actually appearing —
     // a quick tap commits before this and never pays for the AX round-trips.
-    [WindowInfo fillTitlesViaAccessibility:self.windows];
+    WindowInfo *selectedWindow =
+        (self.selectedIndex >= 0 && self.selectedIndex < (NSInteger)self.windows.count)
+            ? self.windows[self.selectedIndex] : nil;
+    self.windows = [WindowInfo filterAndFillTitlesViaAccessibility:self.windows];
+    // Keep the same selection if it survived filtering. If the selected entry
+    // was the auxiliary surface, use the usual previous-window choice instead.
+    NSUInteger selected = selectedWindow
+        ? [self.windows indexOfObjectIdenticalTo:selectedWindow] : NSNotFound;
+    if (selected != NSNotFound) {
+        self.selectedIndex = (NSInteger)selected;
+    } else {
+        self.selectedIndex = self.windows.count > 1 ? 1 : 0;
+    }
+    NSInteger last = (NSInteger)self.windows.count - 1;
+    if (self.selectedIndex > last) self.selectedIndex = last;
     [self.panel showWindows:self.windows selectedIndex:self.selectedIndex];
     self.panelVisible = YES;
 }

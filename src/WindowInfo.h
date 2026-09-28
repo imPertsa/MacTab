@@ -15,13 +15,13 @@
 // proxy), excluding our own process and non-window chrome.
 + (NSArray<WindowInfo *> *)currentSpaceWindowsExcludingPID:(pid_t)selfPID;
 
-// Fill in empty windowTitles via the Accessibility API (kAXTitle).
+// Resolve window titles and omit Helium's separate Find-in-Page AX window.
 // CGWindowListCopyWindowInfo only returns kCGWindowName to processes with
 // Screen Recording permission, which we don't request — so titles must come
 // from AX instead. Makes synchronous AX calls into each owning app (bounded by
 // a short messaging timeout); call it only when the panel is about to show,
 // never on the quick-tap path.
-+ (void)fillTitlesViaAccessibility:(NSArray<WindowInfo *> *)windows;
++ (NSArray<WindowInfo *> *)filterAndFillTitlesViaAccessibility:(NSArray<WindowInfo *> *)windows;
 
 // Display string used in the overlay.
 - (NSString *)displayTitle;
