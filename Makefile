@@ -3,8 +3,10 @@ BUNDLE   := $(APP_NAME).app
 BUILD    := build
 BIN      := $(BUILD)/$(BUNDLE)/Contents/MacOS/$(APP_NAME)
 
-# Command Line Tools' SDK is broken on this machine; use Xcode's SDK directly.
-SDK := $(shell ls -d /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk 2>/dev/null)
+# Use the SDK from the active developer directory (works with either Xcode or
+# the Command Line Tools). Override with `make SDK=/path/to/MacOSX.sdk`.
+SDK ?= $(shell xcrun --show-sdk-path 2>/dev/null)
+SDKFLAG := $(if $(SDK),-isysroot $(SDK))
 
 SOURCES := $(wildcard src/*.m)
 
@@ -22,13 +24,14 @@ FRAMEWORKS := -framework Cocoa \
               -framework CoreGraphics
 
 CFLAGS := -fobjc-arc -fmodules -Wall -Wno-deprecated-declarations \
-          -mmacosx-version-min=12.0 -isysroot $(SDK) -Isrc
+          -mmacosx-version-min=12.0 $(SDKFLAG) -Isrc
 
 .PHONY: all clean run sign install uninstall logs stream-logs startup-install startup-uninstall
 
 all: $(BUNDLE)
 
 $(BUNDLE): $(SOURCES) Info.plist
+	@test -n "$(SDK)" || { echo "No macOS SDK found. Install Xcode or the Command Line Tools, or run make with SDK=/path/to/MacOSX.sdk"; exit 1; }
 	@mkdir -p $(BUILD)/$(BUNDLE)/Contents/MacOS
 	clang $(CFLAGS) $(FRAMEWORKS) $(SOURCES) -o $(BIN)
 	cp Info.plist $(BUILD)/$(BUNDLE)/Contents/Info.plist

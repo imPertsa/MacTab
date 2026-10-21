@@ -28,10 +28,15 @@ verification is manual (run it and exercise ⌘Tab).
 
 ### Toolchain gotcha
 
-The machine's Command Line Tools SDK is broken, so the `Makefile` hard-codes
-`-isysroot` to Xcode's SDK
-(`/Applications/Xcode.app/.../MacOSX.platform/.../MacOSX.sdk`). `xcrun`/`xcodebuild`
-do not work here; don't rely on them.
+The `Makefile` asks `xcrun --show-sdk-path` for the SDK, so it works with either
+a full Xcode install or just the Command Line Tools, and respects
+`xcode-select`. Override it explicitly if needed:
+`make SDK=/path/to/MacOSX.sdk`. If `xcrun` returns nothing, install the Command
+Line Tools with `xcode-select --install`.
+
+(An earlier version hard-coded Xcode's SDK because the Command Line Tools SDK
+was broken on one machine. That workaround broke builds on machines without
+Xcode, so it was replaced by the `xcrun` lookup.)
 
 ## Architecture
 
